@@ -2,7 +2,7 @@
 
 本仓库（[laplacesc/subboost](https://github.com/laplacesc/subboost)）基于官方 [SubBoost](https://subboost.org/) 2.12.0，在自托管版（`local/`）上增加 GitHub 登录、账户等级和账户管理。仅供自用。
 
-官方原有的说明见 [README.md](README.md) / [README-CN.md](README-CN.md)，这两个文件不做修改。
+官方原有的说明见 [README.md](../README.md) / [README-CN.md](../README-CN.md)，这两个文件不做修改。
 
 ## 相对官方的改动
 
@@ -72,7 +72,7 @@ npm run test:unit
 
 ### 方式一：在部署主机上从源码构建
 
-完整步骤（新实例初始化、配置 GitHub OAuth App、升级已有实例、回退）见 [docs/fork-self-hosting.md](docs/fork-self-hosting.md)。核心命令：
+完整步骤（新实例初始化、配置 GitHub OAuth App、升级已有实例、回退）见 [docs/fork-self-hosting.md](../docs/fork-self-hosting.md)。核心命令：
 
 ```bash
 docker compose -p subboost --env-file .env \
@@ -101,7 +101,7 @@ services:
       GITHUB_OAUTH_CLIENT_SECRET: ${GITHUB_OAUTH_CLIENT_SECRET:-}
 ```
 
-沿用已有实例的 Compose 项目名、数据卷和 `.env`。先按[升级指南](docs/fork-self-hosting.md#升级已有实例和回退)停止旧版 `app` 和 `cron`、备份配置和数据库，再启动：
+沿用已有实例的 Compose 项目名、数据卷和 `.env`。先按[升级指南](../docs/fork-self-hosting.md#升级已有实例和回退)停止旧版 `app` 和 `cron`、备份配置和数据库，再启动：
 
 ```bash
 docker compose -p subboost --env-file .env \
@@ -110,7 +110,7 @@ docker compose -p subboost --env-file .env \
 
 容器启动时会自动执行迁移。确认密码登录、原有订阅链接都正常后，再在 `.env` 中填写 `GITHUB_OAUTH_CLIENT_ID` 和 `GITHUB_OAUTH_CLIENT_SECRET`，并重新执行上面的 `up -d app`。OAuth App 的回调地址为 `${APP_URL}/api/auth/github/callback`。
 
-升级时用新代码重新构建镜像、换一个标签，修改 `docker-compose.fork.yml` 中的 `image` 后执行同样的命令。回退方法见 [docs/fork-self-hosting.md](docs/fork-self-hosting.md#升级已有实例和回退)：只换回旧镜像不够，需要恢复升级前的数据库备份。
+升级时用新代码重新构建镜像、换一个标签，修改 `docker-compose.fork.yml` 中的 `image` 后执行同样的命令。回退方法见 [docs/fork-self-hosting.md](../docs/fork-self-hosting.md#升级已有实例和回退)：只换回旧镜像不够，需要恢复升级前的数据库备份。
 
 ### 注意事项
 
