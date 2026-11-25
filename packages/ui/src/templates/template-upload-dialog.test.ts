@@ -149,20 +149,23 @@ describe("TemplateUploadDialog", () => {
     expect(props.onUpload).toHaveBeenCalled();
   });
 
-  it("renders yaml/uploading and default-public states", () => {
+  it("hides all publishing controls for a self-hosted admin", () => {
+    const { html } = renderDialog({ userIsAdmin: true, showVisibilityControls: false });
+
+    expect(html).toContain("上传模板");
+    expect(mocks.switchFields).toHaveLength(0);
+  });
+
+  it("renders YAML and uploading states", () => {
     const { html, props } = renderDialog({
       mode: "yaml",
       yamlContent: "",
       isUploading: true,
-      asDefault: true,
-      isPublic: true,
-      showVisibilityControls: false,
     });
 
     expect(html).toContain("YAML 模板上传开发中。");
     expect(html).toContain("配置内容（YAML）");
     expect(html).toContain("loader-icon");
-    expect(html).not.toContain("公开模板");
     mocks.textareas[1].onChange({ target: { value: "mixed-port: 7890" } });
     expect(props.onYamlContentChange).toHaveBeenCalledWith("mixed-port: 7890");
     expect(mocks.buttons.at(-1)).toEqual(expect.objectContaining({ disabled: true }));

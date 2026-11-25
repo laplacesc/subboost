@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import { NextResponse } from "next/server";
 import { apiError, getStringField, jsonBodyError } from "@local/lib/http";
 import { prisma } from "@local/lib/prisma";
+import { ACCOUNT_KIND_PASSWORD, PASSWORD_ADMIN_LEVEL } from "@local/lib/account-identity";
 import { sessionCookieOptions, signSession, SESSION_COOKIE } from "@local/lib/session";
 import { enterUnknownLoginQueue } from "@local/lib/login-queue";
 import { readLoginBody } from "@local/lib/login-body";
@@ -55,8 +56,19 @@ export async function POST(request: Request) {
   let admin;
   let valid;
   try {
-    admin = await prisma.localAdmin.findUnique({ where: { username }, select: { id: true, username: true, passwordHash: true } });
-    valid = admin ? await bcrypt.compare(password, admin.passwordHash) : false;
+    admin = await prisma.localAdmin.findUnique({
+      where: { username },
+      select: { id: true, username: true, passwordHash: true, accountKind: true, accountLevel: true },
+    });
+    const passwordAccount =
+      admin?.accountKind === ACCOUNT_KIND_PASSWORD &&
+      admin.accountLevel === PASSWORD_ADMIN_LEVEL &&
+      admin.username &&
+      admin.passwordHash
+        ? { id: admin.id, username: admin.username, passwordHash: admin.passwordHash }
+        : null;
+    valid = passwordAccount ? await bcrypt.compare(password, passwordAccount.passwordHash) : false;
+    admin = passwordAccount ?? null;
   } finally {
     release?.();
   }

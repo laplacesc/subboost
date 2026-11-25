@@ -1,5 +1,6 @@
 import { getOptionalCurrentAdmin, localAdminRequiredResponse, withCurrentAdmin } from "@local/lib/api-auth";
 import { apiError, json, jsonBodyError, LOCAL_JSON_BODY_LIMITS, readJsonBody } from "@local/lib/http";
+import { QuotaExceededError } from "@local/lib/account-quota";
 import {
   createTemplate,
   deleteTemplate,
@@ -61,6 +62,7 @@ export async function POST(request: Request) {
       const template = await createTemplate(admin.id, parsedBody.value);
       return json({ template }, 201);
     } catch (error) {
+      if (error instanceof QuotaExceededError) return apiError(error.message, error.code, 403);
       return apiError(error instanceof Error ? error.message : "Unable to create template.", "BAD_REQUEST", 400);
     }
   });

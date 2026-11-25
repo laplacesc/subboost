@@ -18,15 +18,16 @@ import {
   serializeSubscriptionSummaryData,
   validateSubscriptionNodeList,
   type SavedSource,
-  type RefreshNodeSnapshotResult,
 } from "@subboost/server-core/subscription";
 import { decryptJson, decryptJsonObject, encryptJson } from "./crypto";
 import { getAppUrl } from "./env";
 import { prisma } from "./prisma";
 import { fetchSourceUserInfoHeadersDirect, importSourceUrlDirect } from "./source-import";
 import { normalizeLocalAutoUpdateIntervalSeconds } from "./auto-update-policy";
+import { ACCOUNT_QUOTAS, assertSubscriptionWithinQuota, assertWithinQuota, subscriptionUsage } from "./account-quota";
+import { effectiveNodeLimit, lockAccountLevel, requireLockedAccountLevel } from "./account-quota-store";
 
-export const MAX_NODES_PER_SUBSCRIPTION = 10000;
+export const MAX_NODES_PER_SUBSCRIPTION = ACCOUNT_QUOTAS[4].nodesPerSubscription;
 export const CACHE_TTL_SECONDS = 3600;
 
 export type SubscriptionRow = {
@@ -220,80 +221,92 @@ export async function createSubscription(ownerId: string, body: unknown): Promis
   const autoUpdateInterval = normalizeLocalAutoUpdateIntervalSeconds(body.autoUpdateInterval);
   const subscriptionInfo = normalizeSubscriptionInfoForPersistence(body.subscriptionInfo) ?? {};
 
-  const row = await prisma.subscription.create({
-    data: {
-      ownerId,
-      name,
-      token: generateLocalSubscriptionToken(),
-      encryptedUrls: encryptJson(urls),
-      encryptedNodes: encryptJson(nodes),
-      encryptedConfig: encryptJson(config),
-      encryptedSubscriptionInfo: encryptJson(subscriptionInfo),
-      autoUpdateInterval,
-    },
-    include: { autoUpdateState: true },
+  const row = await prisma.$transaction(async (tx) => {
+    const level = await requireLockedAccountLevel(tx, ownerId);
+    const count = await tx.subscription.count({ where: { ownerId } });
+    assertWithinQuota("subscriptions", level, count + 1, count);
+    assertSubscriptionWithinQuota(level, subscriptionUsage(nodes, config, urls));
+    return tx.subscription.create({
+      data: {
+        ownerId,
+        name,
+        token: generateLocalSubscriptionToken(),
+        encryptedUrls: encryptJson(urls),
+        encryptedNodes: encryptJson(nodes),
+        encryptedConfig: encryptJson(config),
+        encryptedSubscriptionInfo: encryptJson(subscriptionInfo),
+        autoUpdateInterval,
+      },
+      include: { autoUpdateState: true },
+    });
   });
   return formatSubscription(row);
 }
 
 export async function updateSubscription(ownerId: string, id: string, body: unknown): Promise<SubscriptionSummary | null> {
   if (!isRecord(body)) throw new Error("Invalid request body.");
-  const current = await prisma.subscription.findFirst({ where: { id, ownerId }, include: { autoUpdateState: true } });
-  if (!current) return null;
 
-  const currentSecrets = readSubscriptionSecrets(current);
-  const name = normalizeSubscriptionName(body.name) || current.name;
-  const data: Record<string, unknown> = { name };
-  const hasUrls = "urls" in body;
-  const hasNodes = "nodes" in body;
-  const hasConfig = "config" in body || "smartNodeMatchingEnabled" in body;
-  const nextNodes = hasNodes ? validateLocalSubscriptionNodes(body.nodes) : currentSecrets.nodes;
-  let nextConfig = currentSecrets.config;
-
-  if (hasUrls) {
-    data.encryptedUrls = encryptJson(normalizeSubscriptionUrlList(body.urls));
-  }
-  if (hasNodes) {
-    data.encryptedNodes = encryptJson(nextNodes);
-  }
-  if (hasConfig) {
-    nextConfig = buildLocalSubscriptionConfig(body, currentSecrets.config);
-    data.encryptedConfig = encryptJson(nextConfig);
-  }
-  if ("subscriptionInfo" in body) {
-    data.encryptedSubscriptionInfo = encryptJson(normalizeSubscriptionInfoForPersistence(body.subscriptionInfo) ?? {});
-  }
-
-  if (hasUrls || hasNodes || hasConfig) {
-    const nextUrls = hasUrls ? normalizeSubscriptionUrlList(body.urls) : currentSecrets.urls;
-    if (nextUrls.length === 0 && nextNodes.length === 0) {
-      throw new Error("At least one URL or node is required.");
-    }
-    assertNodeNameFilterKeepsOutput(nextNodes, nextConfig);
-  }
-
-  let resetAutoUpdateState = false;
-  if ("autoUpdateInterval" in body) {
-    const nextAutoUpdateInterval = normalizeLocalAutoUpdateIntervalSeconds(body.autoUpdateInterval);
-    data.autoUpdateInterval = nextAutoUpdateInterval;
-    resetAutoUpdateState = current.autoUpdateInterval === null && nextAutoUpdateInterval !== null;
-  }
-
+  // Account lock first, then the subscription read the patch merges with.
   const row = await prisma.$transaction(async (tx) => {
-    if (resetAutoUpdateState) {
-      await tx.subscriptionAutoUpdateState.upsert({
-        where: { subscriptionId: current.id },
-        create: { subscriptionId: current.id },
-        update: createResetSubscriptionAutoUpdateState(),
-      });
+    const level = await requireLockedAccountLevel(tx, ownerId);
+    const current = await tx.subscription.findFirst({ where: { id, ownerId }, include: { autoUpdateState: true } });
+    if (!current) return null;
+
+    const currentSecrets = readSubscriptionSecrets(current);
+    const name = normalizeSubscriptionName(body.name) || current.name;
+    const data: Record<string, unknown> = { name };
+    const hasUrls = "urls" in body;
+    const hasNodes = "nodes" in body;
+    const hasConfig = "config" in body || "smartNodeMatchingEnabled" in body;
+    const nextNodes = hasNodes ? validateLocalSubscriptionNodes(body.nodes) : currentSecrets.nodes;
+    const nextUrls = hasUrls ? normalizeSubscriptionUrlList(body.urls) : currentSecrets.urls;
+    let nextConfig = currentSecrets.config;
+
+    if (hasUrls) {
+      data.encryptedUrls = encryptJson(nextUrls);
     }
+    if (hasNodes) {
+      data.encryptedNodes = encryptJson(nextNodes);
+    }
+    if (hasConfig) {
+      nextConfig = buildLocalSubscriptionConfig(body, currentSecrets.config);
+      data.encryptedConfig = encryptJson(nextConfig);
+    }
+    if ("subscriptionInfo" in body) {
+      data.encryptedSubscriptionInfo = encryptJson(normalizeSubscriptionInfoForPersistence(body.subscriptionInfo) ?? {});
+    }
+
+    if (hasUrls || hasNodes || hasConfig) {
+      if (nextUrls.length === 0 && nextNodes.length === 0) {
+        throw new Error("At least one URL or node is required.");
+      }
+      assertNodeNameFilterKeepsOutput(nextNodes, nextConfig);
+      assertSubscriptionWithinQuota(
+        level,
+        subscriptionUsage(nextNodes, nextConfig, nextUrls),
+        subscriptionUsage(currentSecrets.nodes, currentSecrets.config, currentSecrets.urls)
+      );
+    }
+
+    if ("autoUpdateInterval" in body) {
+      const nextAutoUpdateInterval = normalizeLocalAutoUpdateIntervalSeconds(body.autoUpdateInterval);
+      data.autoUpdateInterval = nextAutoUpdateInterval;
+      if (current.autoUpdateInterval === null && nextAutoUpdateInterval !== null) {
+        await tx.subscriptionAutoUpdateState.upsert({
+          where: { subscriptionId: current.id },
+          create: { subscriptionId: current.id },
+          update: createResetSubscriptionAutoUpdateState(),
+        });
+      }
+    }
+
     return tx.subscription.update({
       where: { id: current.id },
       data,
       include: { autoUpdateState: true },
     });
   });
-  return formatSubscription(row);
+  return row ? formatSubscription(row) : null;
 }
 
 export async function getSubscription(ownerId: string, id: string): Promise<SubscriptionDetail | null> {
@@ -324,14 +337,14 @@ export async function resetSubscriptionLink(ownerId: string, id: string, expecte
   return { status: "updated" as const, subscription: { id, token, subscriptionUrl: buildLocalSubscriptionUrl(token) } };
 }
 
-export function buildSubscriptionFetchCallbacks() {
+export function buildSubscriptionFetchCallbacks(ownerId: string) {
   return {
     fetchUrlNodes: async (source: SavedSource) => {
       const imported = await importSourceUrlDirect({
         url: source.content,
         ...(source.userinfoUrl ? { userinfoUrl: source.userinfoUrl } : {}),
         ...(source.userinfoUserAgent ? { userinfoUserAgent: source.userinfoUserAgent } : {}),
-      });
+      }, ownerId);
       if (imported.ok) {
         return {
           ok: true,
@@ -350,7 +363,7 @@ export function buildSubscriptionFetchCallbacks() {
       };
     },
     fetchUrlUserInfo: async (source: SavedSource) => {
-      return fetchSourceUserInfoHeadersDirect(source);
+      return fetchSourceUserInfoHeadersDirect(source, ownerId);
     },
   };
 }
@@ -359,34 +372,13 @@ export function buildSubscriptionCacheExpiry(from: Date): Date {
   return new Date(from.getTime() + CACHE_TTL_SECONDS * 1000);
 }
 
-async function persistRefreshSuccess(params: {
-  subscriptionId: string;
-  expectedUpdatedAt: Date;
-  snapshot: RefreshNodeSnapshotResult;
-  config: Record<string, unknown>;
-  cachedAt: Date;
-}): Promise<boolean> {
-  return prisma.$transaction(async (tx) => {
-    const updated = await tx.subscription.updateMany({
-      where: { id: params.subscriptionId, updatedAt: params.expectedUpdatedAt },
-      data: {
-        encryptedNodes: encryptJson(params.snapshot.nodes),
-        encryptedConfig: encryptJson(params.config),
-        encryptedSubscriptionInfo: encryptJson(params.snapshot.subscriptionInfo),
-        lastUpdatedAt: params.cachedAt,
-        cacheExpiresAt: buildSubscriptionCacheExpiry(params.cachedAt),
-        updatedAt: params.cachedAt,
-      },
-    });
-    if (updated.count !== 1) return false;
-    await tx.subscriptionAutoUpdateState.upsert({
-      where: { subscriptionId: params.subscriptionId },
-      create: { subscriptionId: params.subscriptionId },
-      update: createResetSubscriptionAutoUpdateState(),
-    });
-    return true;
-  });
-}
+const staleRefresh = {
+  ok: false as const,
+  response: {
+    body: { error: "Subscription changed while refresh was in progress.", code: "SUBSCRIPTION_CHANGED" },
+    status: 409,
+  },
+};
 
 export async function refreshSubscription(ownerId: string, id: string) {
   const row = await prisma.subscription.findFirst({ where: { id, ownerId }, include: { autoUpdateState: true } });
@@ -397,50 +389,47 @@ export async function refreshSubscription(ownerId: string, id: string) {
     config: secrets.config,
     urls: secrets.urls,
     storedNodes: secrets.nodes,
-    ...buildSubscriptionFetchCallbacks(),
-  });
-  const refreshResult = prepareRefreshCacheResult({
-    config: secrets.config,
-    snapshot,
-    maxNodesPerSubscription: MAX_NODES_PER_SUBSCRIPTION,
+    ...buildSubscriptionFetchCallbacks(row.ownerId),
   });
 
-  if (!refreshResult.ok) {
-    return {
-      ok: false as const,
-      response: buildManualRefreshFailureResponse({
-        refreshResult,
-        maxNodesPerSubscription: MAX_NODES_PER_SUBSCRIPTION,
-      }),
-    };
-  }
+  return prisma.$transaction(async (tx) => {
+    const level = await lockAccountLevel(tx, ownerId);
+    if (level === null) return staleRefresh;
+    const version = { id: row.id, updatedAt: row.updatedAt };
+    const maxNodesPerSubscription = effectiveNodeLimit(level, secrets.nodes.length, MAX_NODES_PER_SUBSCRIPTION);
+    const refreshResult = prepareRefreshCacheResult({ config: secrets.config, snapshot, maxNodesPerSubscription });
+    if (!refreshResult.ok) {
+      const current = await tx.subscription.findFirst({ where: version, select: { id: true } });
+      if (!current) return staleRefresh;
+      return {
+        ok: false as const,
+        response: buildManualRefreshFailureResponse({ refreshResult, maxNodesPerSubscription }),
+      };
+    }
 
-  const cachedAt = new Date();
-  const persisted = await persistRefreshSuccess({
-    subscriptionId: row.id,
-    expectedUpdatedAt: row.updatedAt,
-    snapshot,
-    config: refreshResult.refreshedConfig,
-    cachedAt,
-  });
-  if (!persisted) {
-    return {
-      ok: false as const,
-      response: {
-        body: { error: "Subscription changed while refresh was in progress.", code: "SUBSCRIPTION_CHANGED" },
-        status: 409,
+    const cachedAt = new Date();
+    const updated = await tx.subscription.updateMany({
+      where: version,
+      data: {
+        encryptedNodes: encryptJson(snapshot.nodes),
+        encryptedConfig: encryptJson(refreshResult.refreshedConfig),
+        encryptedSubscriptionInfo: encryptJson(snapshot.subscriptionInfo),
+        lastUpdatedAt: cachedAt,
+        cacheExpiresAt: buildSubscriptionCacheExpiry(cachedAt),
+        updatedAt: cachedAt,
       },
+    });
+    if (updated.count !== 1) return staleRefresh;
+    await tx.subscriptionAutoUpdateState.upsert({
+      where: { subscriptionId: row.id },
+      create: { subscriptionId: row.id },
+      update: createResetSubscriptionAutoUpdateState(),
+    });
+    return {
+      ok: true as const,
+      body: buildManualRefreshSuccessResponseBody({ subscriptionId: row.id, refreshResult, snapshot, cachedAt }),
     };
-  }
-  return {
-    ok: true as const,
-    body: buildManualRefreshSuccessResponseBody({
-      subscriptionId: row.id,
-      refreshResult,
-      snapshot,
-      cachedAt,
-    }),
-  };
+  });
 }
 
 export async function generateSubscriptionYaml(token: string): Promise<GeneratedSubscriptionYaml | null> {

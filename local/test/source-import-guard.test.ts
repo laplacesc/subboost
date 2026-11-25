@@ -15,7 +15,7 @@ describe("local source import network guard", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await importSourceUrlDirect({ url: "http://127.0.0.1:8080/sub.yaml" });
+    const result = await importSourceUrlDirect({ url: "http://127.0.0.1:8080/sub.yaml" }, "github-owner");
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.errorInfo.category).toBe("security");

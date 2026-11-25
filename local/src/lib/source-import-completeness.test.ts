@@ -27,7 +27,7 @@ describe("local guarded snapshot negotiation", () => {
       const ua = options.userAgent;
       return { status: 200, headers: { profile: ua }, content: `proxies: [${basic}${ua === "clash-verge/v2.5.2" ? ", " + anytls : ""}]` };
     });
-    const result = await importSourceUrlDirect({ url: "https://local.subboost.test/sub" });
+    const result = await importSourceUrlDirect({ url: "https://local.subboost.test/sub" }, "github-owner");
     expect(result).toMatchObject({ ok: true, parsedNodes: [expect.objectContaining({ type: "ss" }), expect.objectContaining({ type: "anytls" })], headers: { profile: "clash-verge/v2.5.2" } });
     expect(mocks.request).toHaveBeenCalledTimes(4);
     expect(mocks.settings).toHaveBeenCalledTimes(1);
@@ -37,7 +37,7 @@ describe("local guarded snapshot negotiation", () => {
   it("retains the valid candidate when later profiles redirect into a private address", async () => {
     mocks.request.mockResolvedValueOnce({ status: 200, headers: {}, content: `proxies: [${basic}]` })
       .mockImplementation(async () => ({ status: 302, headers: { location: "http://127.0.0.1/private" }, content: "" }));
-    const result = await importSourceUrlDirect({ url: "https://local.subboost.test/sub" });
+    const result = await importSourceUrlDirect({ url: "https://local.subboost.test/sub" }, "github-owner");
     expect(result).toMatchObject({ ok: true, parsedNodes: [expect.objectContaining({ type: "ss" })] });
     expect(mocks.request).toHaveBeenCalledTimes(4);
     expect(mocks.request.mock.calls.every(([options]) => options.url === "https://local.subboost.test/sub")).toBe(true);
@@ -50,7 +50,7 @@ describe("local guarded snapshot negotiation", () => {
     const result = await refreshNodeSnapshot({
       config: { sources: [source] }, urls: [], storedNodes: [{ ...stored, _sourceIds: [...stored._sourceIds] }],
       fetchUrlNodes: async () => {
-        const imported = await importSourceUrlDirect({ url: source.content });
+        const imported = await importSourceUrlDirect({ url: source.content }, "github-owner");
         return imported.ok
           ? { ok: true, nodes: imported.parsedNodes }
           : { ok: false, nodes: [], error: imported.error, errorInfo: imported.errorInfo };

@@ -26,6 +26,7 @@ describe("local rule detection", () => {
   });
   it("uses the guarded transport and hides its internal errors", async () => {
     expect(await (await POST(request())).json()).toMatchObject({ format: "text", behavior: "domain" });
+    expect(mocks.fetch).toHaveBeenCalledWith("https://local.subboost.test/rules", "admin-1");
     mocks.fetch.mockResolvedValueOnce({ ok: false, error: "private upstream details" });
     const response = await POST(request());
     expect(response.status).toBe(422);

@@ -243,14 +243,14 @@ async function fetchTextDirect(
   }
 }
 
-export async function fetchRuleContentDirect(url: string): Promise<SourceImportTransportResult> {
-  const allowUnsafeSubscriptionSources = await getAllowUnsafeSubscriptionSources();
+export async function fetchRuleContentDirect(url: string, ownerId: string): Promise<SourceImportTransportResult> {
+  const allowUnsafeSubscriptionSources = await getAllowUnsafeSubscriptionSources(ownerId);
   return fetchTextDirect({ url, userAgent: SUBSCRIPTION_IMPORT_USER_AGENTS[0], purpose: "content",
     timeoutMs: 15000, maxBytes: 10 * 1024 * 1024 }, allowUnsafeSubscriptionSources);
 }
 
-export async function importSourceUrlDirect(request: SourceImportRequest): Promise<SourceImportResult> {
-  const allowUnsafeSubscriptionSources = await getAllowUnsafeSubscriptionSources();
+export async function importSourceUrlDirect(request: SourceImportRequest, ownerId: string): Promise<SourceImportResult> {
+  const allowUnsafeSubscriptionSources = await getAllowUnsafeSubscriptionSources(ownerId);
   return importSubscriptionFromUrl(request, {
     timeoutMs: DEFAULT_TIMEOUT_MS,
     maxBytes: DEFAULT_MAX_BYTES,
@@ -261,9 +261,9 @@ export async function importSourceUrlDirect(request: SourceImportRequest): Promi
 export async function fetchSourceUserInfoHeadersDirect(source: {
   userinfoUrl?: string;
   userinfoUserAgent?: string;
-}): Promise<Record<string, string> | undefined> {
+}, ownerId: string): Promise<Record<string, string> | undefined> {
   if (!source.userinfoUrl) return undefined;
-  const allowUnsafeSubscriptionSources = await getAllowUnsafeSubscriptionSources();
+  const allowUnsafeSubscriptionSources = await getAllowUnsafeSubscriptionSources(ownerId);
   const response = await fetchTextDirect(
     {
       url: source.userinfoUrl,

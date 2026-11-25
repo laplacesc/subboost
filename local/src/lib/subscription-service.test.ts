@@ -199,8 +199,13 @@ describe("local subscription service", () => {
     mocks.prisma.subscription.updateMany.mockResolvedValue({ count: 1 });
     mocks.prisma.subscriptionAutoUpdateState.upsert.mockResolvedValue({});
     mocks.prisma.subscription.delete.mockResolvedValue(row());
+    const count = vi.fn(async () => 0);
     mocks.prisma.$transaction.mockImplementation(async (callback) => callback({
+      $queryRaw: async () => [{ accountLevel: 4 }],
       subscription: {
+        count,
+        create: mocks.prisma.subscription.create,
+        findFirst: mocks.prisma.subscription.findFirst,
         update: mocks.prisma.subscription.update,
         updateMany: mocks.prisma.subscription.updateMany,
       },
@@ -544,7 +549,7 @@ describe("local subscription service", () => {
   });
 
   it("builds fetch callbacks for refresh source imports", async () => {
-    const callbacks = buildSubscriptionFetchCallbacks();
+    const callbacks = buildSubscriptionFetchCallbacks("owner-1");
 
     await expect(
       callbacks.fetchUrlNodes({
@@ -579,7 +584,7 @@ describe("local subscription service", () => {
     });
 
     await callbacks.fetchUrlNodes({ id: "source-2", type: "url", content: "https://example.com/sub" } as any);
-    expect(mocks.importSourceUrlDirect).toHaveBeenLastCalledWith({ url: "https://example.com/sub" });
+    expect(mocks.importSourceUrlDirect).toHaveBeenLastCalledWith({ url: "https://example.com/sub" }, "owner-1");
 
     mocks.importSourceUrlDirect.mockResolvedValueOnce({
       ok: false,

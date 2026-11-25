@@ -125,7 +125,7 @@ export function TemplateUploadDialog({
             )}
           </div>
 
-          {userIsAdmin && (
+          {showVisibilityControls && userIsAdmin && (
             <SwitchField
               label="作为默认模板"
               description="开启后将发布到“默认模板”（公开）"

@@ -35,7 +35,7 @@ function patchRequest(body: string) {
 describe("local source import settings route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.getCurrentAdmin.mockResolvedValue({ id: "admin-1", username: "admin" });
+    mocks.getCurrentAdmin.mockResolvedValue({ id: "admin-1", username: "admin", kind: "PASSWORD", level: 4 });
   });
 
   it("requires the local administrator for reads and writes", async () => {
@@ -49,6 +49,15 @@ describe("local source import settings route", () => {
       status: 401,
       body: { error: "Authentication required.", code: "UNAUTHORIZED" },
     });
+    expect(mocks.prisma.localAdmin.findUnique).not.toHaveBeenCalled();
+    expect(mocks.prisma.localAdmin.update).not.toHaveBeenCalled();
+  });
+
+  it("denies settings reads and writes to GitHub accounts", async () => {
+    mocks.getCurrentAdmin.mockResolvedValue({ id: "github-1", kind: "GITHUB", level: 3 });
+
+    expect((await GET()).status).toBe(403);
+    expect((await PATCH(patchRequest('{"allowUnsafeSubscriptionSources":true}'))).status).toBe(403);
     expect(mocks.prisma.localAdmin.findUnique).not.toHaveBeenCalled();
     expect(mocks.prisma.localAdmin.update).not.toHaveBeenCalled();
   });

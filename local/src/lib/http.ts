@@ -12,6 +12,7 @@ export type LocalApiErrorCode =
   | "CONFLICT"
   | "RATE_LIMITED"
   | "PAYLOAD_TOO_LARGE"
+  | "QUOTA_EXCEEDED"
   | "CONFIGURATION_ERROR"
   | "INTERNAL_ERROR";
 

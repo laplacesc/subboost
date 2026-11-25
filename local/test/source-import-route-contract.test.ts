@@ -47,7 +47,7 @@ describe("local source import route", () => {
       url: "https://example.com/sub.yaml",
       userinfoUrl: "https://example.com/userinfo",
       userinfoUserAgent: "mihomo/1.19.24",
-    });
+    }, admin.id);
     await expect(response.json()).resolves.toMatchObject({
       content: "proxies: []",
       headers: { "subscription-userinfo": "total=3" },
@@ -105,7 +105,7 @@ describe("local source import route", () => {
       url: "https://example.com/sub.yaml",
       userinfoUrl: undefined,
       userinfoUserAgent: undefined,
-    });
+    }, admin.id);
 
     vi.mocked(importSourceUrlDirect).mockResolvedValueOnce({
       ok: false,

@@ -26,7 +26,7 @@ describe("unknown-client login with bcrypt", () => {
     vi.stubEnv("TRUST_PROXY_HEADERS", "false");
     clearLocalRateLimitsForTests();
     const passwordHash = await bcrypt.hash("correct", 8);
-    mocks.findUnique.mockResolvedValue({ id: "1", username: "admin", passwordHash });
+    mocks.findUnique.mockResolvedValue({ id: "1", username: "admin", passwordHash, accountKind: "PASSWORD", accountLevel: 4 });
     mocks.update.mockResolvedValue({});
     const start = performance.now();
     expect((await POST(request("wrong"))).status).toBe(401);

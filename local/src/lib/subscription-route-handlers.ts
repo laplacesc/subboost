@@ -1,5 +1,6 @@
 import { withCurrentAdmin } from "@local/lib/api-auth";
 import { apiError, json, jsonBodyError, LOCAL_JSON_BODY_LIMITS, readJsonBody } from "@local/lib/http";
+import { QuotaExceededError } from "@local/lib/account-quota";
 import {
   createSubscription,
   deleteSubscription,
@@ -26,6 +27,7 @@ export async function createSubscriptionResponse(request: Request) {
       const subscription = await createSubscription(admin.id, parsedBody.value);
       return json({ subscription }, 201);
     } catch (error) {
+      if (error instanceof QuotaExceededError) return apiError(error.message, error.code, 403);
       return apiError(error instanceof Error ? error.message : "Unable to create subscription.", "BAD_REQUEST", 400);
     }
   });
@@ -53,6 +55,7 @@ export async function updateSubscriptionResponse(request: Request, id: string) {
       if (!subscription) return apiError("Subscription not found.", "NOT_FOUND", 404);
       return json({ subscription });
     } catch (error) {
+      if (error instanceof QuotaExceededError) return apiError(error.message, error.code, 403);
       return apiError(error instanceof Error ? error.message : "Unable to update subscription.", "BAD_REQUEST", 400);
     }
   });

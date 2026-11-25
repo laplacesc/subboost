@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   decryptJsonObject: vi.fn(),
   encryptJson: vi.fn(),
   prisma: {
+    $transaction: vi.fn(),
     localTemplate: {
       findMany: vi.fn(),
       findFirst: vi.fn(),
@@ -55,6 +56,10 @@ function row(overrides: Record<string, unknown> = {}) {
 describe("local template service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.prisma.$transaction.mockImplementation(async (callback) => callback({
+      $queryRaw: async () => [{ accountLevel: 4 }],
+      localTemplate: { ...mocks.prisma.localTemplate, count: async () => 0 },
+    }));
     mocks.getTemplateList.mockReturnValue([
       { id: "minimal", name: "Minimal", description: "small", groupCount: 1, ruleCount: 2 },
       { id: "standard", name: "Standard", description: "normal", groupCount: 3, ruleCount: 4 },

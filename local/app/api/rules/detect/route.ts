@@ -8,7 +8,7 @@ export async function POST(request: Request) {
     const rate = consumeLocalRateLimit("rule-detection", admin.id, { limit: 30, windowMs: 60 * 60 * 1000 });
     if (!rate.allowed) return localRateLimitResponse("规则识别过于频繁，请稍后重试", rate.retryAfterSeconds);
     return handleRuleDetection(request, async (url) => {
-      const result = await fetchRuleContentDirect(url);
+      const result = await fetchRuleContentDirect(url, admin.id);
       return result.ok ? result.content ?? null : null;
     });
   });

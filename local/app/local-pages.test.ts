@@ -22,6 +22,8 @@ vi.mock("lucide-react", () => ({
   Network: () => React.createElement("span", null, "Network"),
   ServerCog: () => React.createElement("span", null, "ServerCog"),
   ShieldCheck: () => React.createElement("span", null, "ShieldCheck"),
+  Shield: () => React.createElement("span", null, "Shield"),
+  UserRound: () => React.createElement("span", null, "UserRound"),
 }));
 
 vi.mock("@subboost/ui/components/ui/button", () => ({
@@ -241,28 +243,58 @@ describe("local app pages and adapters", () => {
   it("renders local settings for anonymous and authenticated states", async () => {
     let html = renderToStaticMarkup(React.createElement(SettingsPage));
     expect(html).toContain("未登录");
-    expect(html).toContain("允许本机和局域网订阅");
-    expect(html).toContain("本机、局域网及其他保留地址都可作为订阅源");
+    expect(html).not.toContain("允许本机和局域网订阅");
     expect(html).toContain("/api/health/live");
     expect(mocks.buttons.find((button: any) => button.variant === "destructive")).toMatchObject({
       disabled: true,
     });
-    expect(mocks.switches[0]).toMatchObject({ checked: false, disabled: true });
+    expect(mocks.switches).toHaveLength(0);
 
     vi.stubGlobal("window", { location: { href: "" } });
     mocks.buttons = [];
     mocks.switches = [];
+    const githubUser = {
+      username: "octo",
+      name: "Octo",
+      avatarUrl: null,
+      trustLevel: 2,
+      isAdmin: false,
+      accounts: [{ provider: "github", providerAccountId: "100828870" }],
+      subscriptionCount: 0,
+      templateCount: 1,
+      quota: { maxSubscriptions: 1, maxCustomTemplates: 1, maxNodesPerSubscription: 200, maxImportSourcesPerType: 3 },
+    };
+    mocks.userState = { fetchUser: vi.fn(), logout: vi.fn(), user: githubUser };
+    html = renderToStaticMarkup(React.createElement(SettingsPage));
+    expect(html).toContain("GitHub · 100828870");
+    expect(html).toContain("Level 2");
+    expect(html).toContain("0/1");
+    expect(html).toContain("200");
+    expect(html).not.toContain("允许本机和局域网订阅");
+    expect(mocks.switches).toHaveLength(0);
+
+    mocks.buttons = [];
     mocks.userState = {
       fetchUser: vi.fn(),
       logout: vi.fn(),
-      user: { username: "admin", subscriptionCount: 2, quota: { maxSubscriptions: 9999 } },
+      user: {
+        ...githubUser,
+        username: "admin",
+        accounts: [],
+        trustLevel: 4,
+        isAdmin: true,
+        subscriptionCount: 2,
+        quota: { maxSubscriptions: 9999, maxCustomTemplates: 9999, maxNodesPerSubscription: 10000, maxImportSourcesPerType: 9999 },
+      },
     };
     html = renderToStaticMarkup(React.createElement(SettingsPage));
-    expect(html).toContain("admin");
-    expect(html).toContain("2 / 9999");
+    expect(html).toContain("密码 · admin");
+    expect(html).toContain("Level 4");
+    expect(html).toContain("2/不限");
+    expect(html).toContain("允许本机和局域网订阅");
+    expect(mocks.switches[0]).toMatchObject({ checked: false, disabled: true });
     const logoutButton = mocks.buttons.find((button: any) => button.variant === "destructive");
     expect(logoutButton).toMatchObject({ disabled: false });
-    expect(mocks.switches[0]).toMatchObject({ checked: false, disabled: true });
     logoutButton.onClick();
     await Promise.resolve();
     await Promise.resolve();

@@ -10,7 +10,7 @@ function getStringField(body: unknown, key: string): string {
 }
 
 export async function POST(request: Request) {
-  return withCurrentAdmin(async () => {
+  return withCurrentAdmin(async (account) => {
     const parsedBody = await readJsonBody(request, LOCAL_JSON_BODY_LIMITS.small);
     if (!parsedBody.ok) return jsonBodyError(parsedBody);
     const body = parsedBody.value;
@@ -22,7 +22,7 @@ export async function POST(request: Request) {
       url: getStringField(body, "url"),
       userinfoUrl: getStringField(body, "userinfoUrl") || undefined,
       userinfoUserAgent: getStringField(body, "userinfoUserAgent") || undefined,
-    });
+    }, account.id);
 
     if (!result.ok) {
       return json(

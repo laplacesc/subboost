@@ -30,6 +30,9 @@ function buildNewReleaseBadge(status: LatestReleaseStatus | null): HeaderBrandBa
   };
 }
 
+// Fork extension: the shared header shows this only to users projected as isAdmin (the Level 4 password administrator).
+const ACCOUNT_ADMIN_MENU_ITEM = { href: "/dashboard/accounts", label: "账户管理" };
+
 export function LocalHeader() {
   const [newReleaseBadge, setNewReleaseBadge] = React.useState<HeaderBrandBadge | null>(null);
 
@@ -60,5 +63,5 @@ export function LocalHeader() {
     };
   }, []);
 
-  return <Header mode="local" extraBrandBadge={newReleaseBadge} />;
+  return <Header mode="local" extraBrandBadge={newReleaseBadge} privilegedMenuItem={ACCOUNT_ADMIN_MENU_ITEM} />;
 }

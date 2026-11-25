@@ -14,7 +14,6 @@ import {
   type AutomaticRefreshCompletionTarget,
   type CronUpdateOutcome,
   type FinalCronUpdateSummary,
-  type PreparedRefreshCacheResult,
   type RefreshNodeSnapshotResult,
   type SubscriptionAutoUpdateStateFields,
 } from "@subboost/server-core/subscription";
@@ -29,6 +28,8 @@ import {
 } from "./subscription-service";
 import { LOCAL_AUTO_UPDATE_MIN_SECONDS } from "./auto-update-policy";
 import { JobLeaseLostError } from "./job-lease";
+import { effectiveNodeLimit, lockAccountLevel } from "./account-quota-store";
+import type { QuotaTx } from "./account-quota-store";
 
 type AutoUpdateSubscriptionRow = SubscriptionRow & {
   owner: {
@@ -40,7 +41,7 @@ type PreparedLocalRefresh = {
   config: Record<string, unknown>;
   requestedHosts: string[];
   snapshot: RefreshNodeSnapshotResult;
-  refreshResult: PreparedRefreshCacheResult;
+  storedNodeCount: number;
   failureState: ReturnType<typeof resolveAutomaticRefreshFailureAnalysis>["failureState"];
   failureReason: string;
 };
@@ -56,26 +57,22 @@ function toCompletionTarget(subscription: AutoUpdateSubscriptionRow): AutomaticR
 }
 
 async function writeAutoUpdateState(
-  subscriptionId: string,
-  expectedUpdatedAt: Date,
+  tx: QuotaTx,
+  subscription: AutoUpdateSubscriptionRow,
   state: SubscriptionAutoUpdateStateFields,
-  extraSubscriptionData: Record<string, unknown> = {},
-  assertLease?: () => Promise<void>
+  extraSubscriptionData: Record<string, unknown> = {}
 ): Promise<boolean> {
-  await assertLease?.();
-  return prisma.$transaction(async (tx) => {
-    const updated = await tx.subscription.updateMany({
-      where: { id: subscriptionId, updatedAt: expectedUpdatedAt },
-      data: { ...extraSubscriptionData, updatedAt: new Date() },
-    });
-    if (updated.count !== 1) return false;
-    await tx.subscriptionAutoUpdateState.upsert({
-      where: { subscriptionId },
-      create: { subscriptionId, ...state },
-      update: state,
-    });
-    return true;
+  const updated = await tx.subscription.updateMany({
+    where: { id: subscription.id, updatedAt: subscription.updatedAt },
+    data: { ...extraSubscriptionData, updatedAt: new Date() },
   });
+  if (updated.count !== 1) return false;
+  await tx.subscriptionAutoUpdateState.upsert({
+    where: { subscriptionId: subscription.id },
+    create: { subscriptionId: subscription.id, ...state },
+    update: state,
+  });
+  return true;
 }
 
 function staleOutcome(requestedHosts: string[]): CronUpdateOutcome {
@@ -93,125 +90,21 @@ async function prepareLocalRefresh(
     config: secrets.config,
     urls: secrets.urls,
     storedNodes: secrets.nodes,
-    ...buildSubscriptionFetchCallbacks(),
+    ...buildSubscriptionFetchCallbacks(subscription.ownerId),
   });
   const { failureState, failureReason } = resolveAutomaticRefreshFailureAnalysis({
     currentState: currentAutoUpdateState,
     snapshot,
     failedAt: attemptedAt,
   });
-  const refreshResult = prepareRefreshCacheResult({
-    config: secrets.config,
-    snapshot,
-    maxNodesPerSubscription: MAX_NODES_PER_SUBSCRIPTION,
-  });
-
   return {
     config: secrets.config,
     requestedHosts,
     snapshot,
-    refreshResult,
+    storedNodeCount: secrets.nodes.length,
     failureState,
     failureReason,
   };
-}
-
-async function completeAllSourcesFailed(params: {
-  subscription: AutoUpdateSubscriptionRow;
-  prepared: PreparedLocalRefresh;
-  decision: Extract<ReturnType<typeof resolveAutomaticRefreshCompletionDecision>, { kind: "all_sources_failed" }>;
-  assertLease?: () => Promise<void>;
-}): Promise<CronUpdateOutcome> {
-  const persisted = await writeAutoUpdateState(
-    params.subscription.id,
-    params.subscription.updatedAt,
-    params.decision.nextAutoUpdateState.state,
-    { ...(params.decision.nextAutoUpdateState.shouldDisableAutoUpdate ? { autoUpdateInterval: null } : {}) },
-    params.assertLease
-  );
-  if (!persisted) return staleOutcome(params.prepared.requestedHosts);
-
-  if (params.decision.nextAutoUpdateState.shouldDisableAutoUpdate) {
-    console.warn("[local-subscription-cron] auto update disabled", {
-      subscriptionId: params.subscription.id,
-      reason: params.prepared.failureReason,
-    });
-  }
-
-  return params.decision.outcome;
-}
-
-async function completeNodeQuotaExceeded(params: {
-  subscription: AutoUpdateSubscriptionRow;
-  prepared: PreparedLocalRefresh;
-  decision: Extract<ReturnType<typeof resolveAutomaticRefreshCompletionDecision>, { kind: "node_quota_exceeded" }>;
-  assertLease?: () => Promise<void>;
-}): Promise<CronUpdateOutcome> {
-  const state = params.decision.nextAutoUpdateState.state;
-  const persisted = await writeAutoUpdateState(
-    params.subscription.id,
-    params.subscription.updatedAt,
-    state,
-    { ...(params.decision.nextAutoUpdateState.shouldDisableAutoUpdate ? { autoUpdateInterval: null } : {}) },
-    params.assertLease
-  );
-  if (!persisted) return staleOutcome(params.prepared.requestedHosts);
-
-  console.warn("[local-subscription-cron] node quota exceeded", {
-    subscriptionId: params.subscription.id,
-    actualNodeCount: state.lastNodeQuotaActual,
-    effectiveNodeLimit: state.lastNodeQuotaLimit,
-    nodeQuotaFailureCount: state.nodeQuotaFailureCount,
-    autoUpdateDisabled: params.decision.nextAutoUpdateState.shouldDisableAutoUpdate,
-  });
-  return params.decision.outcome;
-}
-
-async function completeSuccess(params: {
-  subscription: AutoUpdateSubscriptionRow;
-  prepared: PreparedLocalRefresh;
-  attemptedAt: Date;
-  intervalSeconds: number;
-  assertLease?: () => Promise<void>;
-}): Promise<CronUpdateOutcome> {
-  const refreshResult = params.prepared.refreshResult;
-  if (!refreshResult.ok) throw new Error(`Unexpected refresh failure reason: ${refreshResult.reason}`);
-
-  const cachedAt = new Date();
-  const decision = resolveAutomaticRefreshCompletionDecision({
-    target: toCompletionTarget(params.subscription),
-    currentAutoUpdateState: resolveSubscriptionAutoUpdateState(params.subscription),
-    prepared: params.prepared,
-    attemptedAt: params.attemptedAt,
-    successAttemptedAt: cachedAt,
-    maxNodesPerSubscription: MAX_NODES_PER_SUBSCRIPTION,
-  });
-  if (decision.kind !== "success") throw new Error(`Unexpected refresh completion decision: ${decision.kind}`);
-  const persisted = await writeAutoUpdateState(
-    params.subscription.id,
-    params.subscription.updatedAt,
-    decision.nextAutoUpdateState.state,
-    {
-      encryptedNodes: encryptJson(refreshResult.cacheEntry.nodes),
-      encryptedConfig: encryptJson(refreshResult.refreshedConfig),
-      encryptedSubscriptionInfo: encryptJson(refreshResult.cacheEntry.subscriptionInfo),
-      lastUpdatedAt: cachedAt,
-      cacheExpiresAt: buildSubscriptionCacheExpiry(cachedAt),
-      ...(decision.nextAutoUpdateState.shouldDisableAutoUpdate ? { autoUpdateInterval: null } : {}),
-    },
-    params.assertLease
-  );
-  if (!persisted) return staleOutcome(params.prepared.requestedHosts);
-
-  console.info("[local-subscription-cron] updated", {
-    subscriptionId: params.subscription.id,
-    nodeCount: refreshResult.nodeCount,
-    intervalSeconds: params.intervalSeconds,
-    externalFailureCount: decision.nextAutoUpdateState.externalFailureCount,
-    autoUpdateDisabled: decision.nextAutoUpdateState.shouldDisableAutoUpdate,
-  });
-
-  return decision.outcome;
 }
 
 async function completeLocalRefresh(params: {
@@ -222,37 +115,62 @@ async function completeLocalRefresh(params: {
   intervalSeconds: number;
   assertLease?: () => Promise<void>;
 }): Promise<CronUpdateOutcome> {
-  const refreshResult = params.prepared.refreshResult;
-
-  if (!refreshResult.ok) {
-    const decision = resolveAutomaticRefreshCompletionDecision({
-      target: toCompletionTarget(params.subscription),
+  const { subscription, prepared } = params;
+  await params.assertLease?.();
+  const decision = await prisma.$transaction(async (tx) => {
+    const level = await lockAccountLevel(tx, subscription.ownerId);
+    if (level === null) return null;
+    const cachedAt = new Date();
+    const maxNodesPerSubscription = effectiveNodeLimit(level, prepared.storedNodeCount, MAX_NODES_PER_SUBSCRIPTION);
+    const refreshResult = prepareRefreshCacheResult({ config: prepared.config, snapshot: prepared.snapshot, maxNodesPerSubscription });
+    const next = resolveAutomaticRefreshCompletionDecision({
+      target: toCompletionTarget(subscription),
       currentAutoUpdateState: params.currentAutoUpdateState,
-      prepared: params.prepared,
+      prepared: { ...prepared, refreshResult },
       attemptedAt: params.attemptedAt,
-      maxNodesPerSubscription: MAX_NODES_PER_SUBSCRIPTION,
+      successAttemptedAt: cachedAt,
+      maxNodesPerSubscription,
     });
-
-    if (decision.kind === "all_sources_failed") {
-      return completeAllSourcesFailed({ ...params, decision });
+    if (next.kind === "empty_result") {
+      return (await writeAutoUpdateState(tx, subscription, next.attemptedState)) ? next : null;
     }
-    if (decision.kind === "node_quota_exceeded") {
-      return completeNodeQuotaExceeded({ ...params, decision });
+    const data: Record<string, unknown> = {};
+    if (next.nextAutoUpdateState.shouldDisableAutoUpdate) data.autoUpdateInterval = null;
+    if (next.kind === "success") {
+      data.encryptedNodes = encryptJson(next.refreshResult.cacheEntry.nodes);
+      data.encryptedConfig = encryptJson(next.refreshResult.refreshedConfig);
+      data.encryptedSubscriptionInfo = encryptJson(next.refreshResult.cacheEntry.subscriptionInfo);
+      data.lastUpdatedAt = cachedAt;
+      data.cacheExpiresAt = buildSubscriptionCacheExpiry(cachedAt);
     }
-    if (decision.kind === "success") throw new Error("Unexpected successful completion decision");
+    return (await writeAutoUpdateState(tx, subscription, next.nextAutoUpdateState.state, data)) ? next : null;
+  });
+  if (!decision) return staleOutcome(prepared.requestedHosts);
 
-    const persisted = await writeAutoUpdateState(
-      params.subscription.id,
-      params.subscription.updatedAt,
-      decision.attemptedState,
-      {},
-      params.assertLease
-    );
-    if (!persisted) return staleOutcome(params.prepared.requestedHosts);
-    return decision.outcome;
+  if (decision.kind === "node_quota_exceeded") {
+    const { state, shouldDisableAutoUpdate } = decision.nextAutoUpdateState;
+    console.warn("[local-subscription-cron] node quota exceeded", {
+      subscriptionId: subscription.id,
+      actualNodeCount: state.lastNodeQuotaActual,
+      effectiveNodeLimit: state.lastNodeQuotaLimit,
+      nodeQuotaFailureCount: state.nodeQuotaFailureCount,
+      autoUpdateDisabled: shouldDisableAutoUpdate,
+    });
+  } else if (decision.kind === "all_sources_failed" && decision.nextAutoUpdateState.shouldDisableAutoUpdate) {
+    console.warn("[local-subscription-cron] auto update disabled", {
+      subscriptionId: subscription.id,
+      reason: prepared.failureReason,
+    });
+  } else if (decision.kind === "success") {
+    console.info("[local-subscription-cron] updated", {
+      subscriptionId: subscription.id,
+      nodeCount: decision.refreshResult.nodeCount,
+      intervalSeconds: params.intervalSeconds,
+      externalFailureCount: decision.nextAutoUpdateState.externalFailureCount,
+      autoUpdateDisabled: decision.nextAutoUpdateState.shouldDisableAutoUpdate,
+    });
   }
-
-  return completeSuccess(params);
+  return decision.outcome;
 }
 
 async function recordUnexpectedFailure(params: {
@@ -271,13 +189,12 @@ async function recordUnexpectedFailure(params: {
     currentAutoUpdateState: params.currentAutoUpdateState,
   });
   if (completion.attemptedState) {
-    const persisted = await writeAutoUpdateState(
-      params.subscription.id,
-      params.subscription.updatedAt,
-      completion.attemptedState,
-      {},
-      params.assertLease
-    ).catch((error) => {
+    const attemptedState = completion.attemptedState;
+    await params.assertLease?.();
+    const persisted = await prisma.$transaction(async (tx) => {
+      if (await lockAccountLevel(tx, params.subscription.ownerId) === null) return false;
+      return writeAutoUpdateState(tx, params.subscription, attemptedState);
+    }).catch((error) => {
       if (error instanceof JobLeaseLostError) throw error;
       return null;
     });

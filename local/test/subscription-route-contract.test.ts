@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { QuotaExceededError } from "@local/lib/account-quota";
 
 import { getCurrentAdmin } from "@local/lib/auth";
 import {
@@ -137,6 +138,21 @@ describe("local subscription routes", () => {
       code: "PAYLOAD_TOO_LARGE",
     });
     expect(createSubscription).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 QUOTA_EXCEEDED when a direct API call exceeds the account level", async () => {
+    vi.mocked(createSubscription).mockRejectedValueOnce(new QuotaExceededError("subscriptions", 2, 1));
+    const createResponse = await pluralCollectionRoute.POST(jsonRequest("http://local.test/api/subscriptions", fullConfigPayload));
+    expect(createResponse.status).toBe(403);
+    expect(await readJson(createResponse)).toEqual({ error: "当前账户等级最多可创建 1 个订阅。", code: "QUOTA_EXCEEDED" });
+
+    vi.mocked(updateSubscription).mockRejectedValueOnce(new QuotaExceededError("nodesPerSubscription", 101, 100));
+    const updateResponse = await pluralItemRoute.PUT(
+      jsonRequest("http://local.test/api/subscriptions/sub-1", fullConfigPayload),
+      { params: Promise.resolve({ id: "sub-1" }) }
+    );
+    expect(updateResponse.status).toBe(403);
+    expect(await readJson(updateResponse)).toMatchObject({ code: "QUOTA_EXCEEDED" });
   });
 
   it("uses plural item and refresh routes with path ids", async () => {

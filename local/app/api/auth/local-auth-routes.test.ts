@@ -65,6 +65,8 @@ describe("local auth and health routes", () => {
       id: "admin-1",
       username: "admin",
       passwordHash: "hash",
+      accountKind: "PASSWORD",
+      accountLevel: 4,
     });
     mocks.bcryptCompare.mockResolvedValueOnce(true);
 
@@ -87,6 +89,29 @@ describe("local auth and health routes", () => {
     expect(response.headers.get("set-cookie")).toContain("subboost-local-session=signed-session");
   });
 
+  it("never lets a GitHub or malformed account pass password login", async () => {
+    const { POST } = await import("./login/route");
+    const attempt = () =>
+      POST(
+        new Request("https://local.test/api/auth/login", {
+          method: "POST",
+          body: JSON.stringify({ username: "admin", password: "secret" }),
+        })
+      );
+    const rows = [
+      { id: "g", username: "admin", passwordHash: "hash", accountKind: "GITHUB", accountLevel: 2 },
+      { id: "x", username: "admin", passwordHash: "hash", accountKind: "PASSWORD", accountLevel: 2 },
+      { id: "y", username: "admin", passwordHash: "hash", accountKind: "", accountLevel: 4 },
+      { id: "z", username: "admin", passwordHash: null, accountKind: "PASSWORD", accountLevel: 4 },
+    ];
+    for (const row of rows) {
+      clearLocalRateLimitsForTests();
+      mocks.prisma.localAdmin.findUnique.mockResolvedValueOnce(row);
+      mocks.bcryptCompare.mockResolvedValue(true);
+      expect((await attempt()).status).toBe(401);
+    }
+    expect(mocks.signSession).not.toHaveBeenCalled();
+  });
   it("rejects invalid JSON or invalid credentials", async () => {
     const { POST } = await import("./login/route");
 
@@ -171,10 +196,13 @@ describe("local auth and health routes", () => {
 
   it("returns the current admin snapshot and anonymous setup state", async () => {
     const { GET } = await import("./me/route");
-    mocks.isSetupRequired.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
-    mocks.getCurrentAdmin.mockResolvedValueOnce({ id: "admin-1", username: "admin" }).mockResolvedValueOnce(null);
-    mocks.prisma.subscription.count.mockResolvedValueOnce(2);
-    mocks.prisma.localTemplate.count.mockResolvedValueOnce(3);
+    mocks.isSetupRequired.mockResolvedValueOnce(false).mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    mocks.getCurrentAdmin
+      .mockResolvedValueOnce({ id: "admin-1", username: "admin", kind: "PASSWORD", level: 4, githubId: null, githubLogin: null, displayName: null, avatarUrl: null })
+      .mockResolvedValueOnce({ id: "gh-1", username: null, kind: "GITHUB", level: 2, githubId: "100", githubLogin: "octo", displayName: "Octo", avatarUrl: "https://a/x.png" })
+      .mockResolvedValueOnce(null);
+    mocks.prisma.subscription.count.mockResolvedValueOnce(2).mockResolvedValueOnce(0);
+    mocks.prisma.localTemplate.count.mockResolvedValueOnce(3).mockResolvedValueOnce(1);
 
     let response = await GET();
     let payload = await response.json();
@@ -184,15 +212,37 @@ describe("local auth and health routes", () => {
       user: {
         id: "admin-1",
         username: "admin",
+        trustLevel: 4,
+        isAdmin: true,
+        accounts: [],
         subscriptionCount: 2,
         templateCount: 3,
-        quota: { maxSubscriptions: 9999 },
+        quota: { maxSubscriptions: 9999, maxNodesPerSubscription: 10000, maxCustomTemplates: 9999, maxImportSourcesPerType: 9999 },
       },
     });
+    expect(mocks.prisma.subscription.count).toHaveBeenLastCalledWith({ where: { ownerId: "admin-1" } });
 
     response = await GET();
     payload = await response.json();
-    expect(payload).toEqual({ setupRequired: true, authenticated: false, user: null });
+    expect(payload).toMatchObject({
+      user: {
+        id: "gh-1",
+        username: "octo",
+        name: "Octo",
+        avatarUrl: "https://a/x.png",
+        trustLevel: 2,
+        isAdmin: false,
+        accounts: [{ provider: "github", providerAccountId: "100", username: "octo" }],
+        subscriptionCount: 0,
+        templateCount: 1,
+        quota: { maxSubscriptions: 1, maxNodesPerSubscription: 200, maxCustomTemplates: 1, maxImportSourcesPerType: 3 },
+      },
+    });
+    expect(mocks.prisma.subscription.count).toHaveBeenLastCalledWith({ where: { ownerId: "gh-1" } });
+
+    response = await GET();
+    payload = await response.json();
+    expect(payload).toEqual({ setupRequired: true, authenticated: false, githubLoginEnabled: false, user: null });
   });
 
   it("reports live and ready health states", async () => {

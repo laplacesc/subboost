@@ -136,16 +136,52 @@ describe("local lib helpers", () => {
     await expect(getCurrentAdmin()).resolves.toBeNull();
 
     mocks.readSession.mockResolvedValueOnce({ adminId: "admin-1" });
-    mocks.prisma.localAdmin.findUnique.mockResolvedValueOnce({ id: "admin-1", username: "root" });
-    await expect(getCurrentAdmin()).resolves.toEqual({ id: "admin-1", username: "root" });
+    const passwordRow = {
+      id: "admin-1",
+      username: "root",
+      accountKind: "PASSWORD",
+      accountLevel: 4,
+      githubId: null,
+      githubLogin: null,
+      displayName: null,
+      avatarUrl: null,
+    };
+    mocks.prisma.localAdmin.findUnique.mockResolvedValueOnce(passwordRow);
+    await expect(getCurrentAdmin()).resolves.toEqual({
+      id: "admin-1",
+      username: "root",
+      kind: "PASSWORD",
+      level: 4,
+      githubId: null,
+      githubLogin: null,
+      displayName: null,
+      avatarUrl: null,
+    });
     expect(mocks.prisma.localAdmin.findUnique).toHaveBeenCalledWith({
       where: { id: "admin-1" },
-      select: { id: true, username: true },
+      select: expect.objectContaining({ id: true, accountKind: true, accountLevel: true, githubId: true }),
     });
+
+    // Missing or invalid kind/level combinations never authenticate.
+    const invalidRows = [
+      { ...passwordRow, accountKind: "" },
+      { ...passwordRow, accountKind: "OTHER" },
+      { ...passwordRow, accountLevel: 3 },
+      { ...passwordRow, accountKind: "GITHUB", accountLevel: 4, username: null, githubId: "1" },
+      { ...passwordRow, accountKind: "GITHUB", accountLevel: 2, username: null, githubId: null },
+      { ...passwordRow, accountKind: "GITHUB", accountLevel: 0, username: null, githubId: "1" },
+      { ...passwordRow, accountKind: "GITHUB", accountLevel: 2, githubId: "1" },
+    ];
+    for (const row of invalidRows) {
+      mocks.readSession.mockResolvedValueOnce({ adminId: "admin-1" });
+      mocks.prisma.localAdmin.findUnique.mockResolvedValueOnce(row);
+      await expect(getCurrentAdmin()).resolves.toBeNull();
+    }
 
     mocks.prisma.localAdmin.count.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
     await expect(isSetupRequired()).resolves.toBe(true);
     await expect(isSetupRequired()).resolves.toBe(false);
+    expect(mocks.prisma.localAdmin.count).toHaveBeenCalledWith({ where: { accountKind: "PASSWORD" } });
   });
 
   it("encrypts and decrypts text and JSON through the shared crypto helpers", () => {

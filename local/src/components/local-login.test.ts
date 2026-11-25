@@ -299,4 +299,28 @@ describe("local login component", () => {
     expect(win.location.href).toBe("/dashboard");
     expect(missingWindow.history.replaceState).not.toHaveBeenCalled();
   });
+
+  it("offers GitHub login only when enabled and setup is complete", () => {
+    installWindow();
+    const enabled = renderLogin({ 0: { setupRequired: false, authenticated: false, githubLoginEnabled: true } });
+    expect(enabled.html).toContain("使用 GitHub 登录");
+    expect(enabled.html).toContain('href="/api/auth/github?returnTo=%2Fdashboard"');
+    expect(enabled.html).toContain("管理员账号登录");
+
+    const disabled = renderLogin({ 0: { setupRequired: false, authenticated: false, githubLoginEnabled: false } });
+    expect(disabled.html).not.toContain("使用 GitHub 登录");
+
+    const setup = renderLogin({ 0: { setupRequired: true, authenticated: false, githubLoginEnabled: true } });
+    expect(setup.html).not.toContain("使用 GitHub 登录");
+    expect(setup.html).toContain("创建管理员");
+  });
+
+  it("shows a local failure message after a rejected GitHub callback", () => {
+    installWindow();
+    const { html } = renderLogin({
+      0: { setupRequired: false, authenticated: false, githubLoginEnabled: true },
+      7: true,
+    });
+    expect(html).toContain("GitHub 登录失败，请重试。");
+  });
 });

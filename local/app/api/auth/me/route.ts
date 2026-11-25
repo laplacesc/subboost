@@ -1,4 +1,7 @@
+import { isPasswordAdmin } from "@local/lib/account-identity";
+import { toUserQuotaProjection } from "@local/lib/account-quota";
 import { getCurrentAdmin, isSetupRequired } from "@local/lib/auth";
+import { isGithubLoginEnabled } from "@local/lib/github-oauth-config";
 import { json } from "@local/lib/http";
 import { prisma } from "@local/lib/prisma";
 
@@ -14,15 +17,16 @@ export async function GET() {
   return json({
     setupRequired,
     authenticated: Boolean(admin),
+    githubLoginEnabled: !setupRequired && isGithubLoginEnabled(),
     user: admin
       ? {
           id: admin.id,
-          username: admin.username,
-          name: admin.username,
-          avatarUrl: null,
-          trustLevel: 4,
+          username: admin.username ?? admin.githubLogin ?? "",
+          name: admin.displayName ?? admin.githubLogin ?? admin.username ?? "",
+          avatarUrl: admin.avatarUrl,
+          trustLevel: admin.level,
           aiAssistantEnabled: false,
-          isAdmin: false,
+          isAdmin: isPasswordAdmin(admin),
           isBanned: false,
           active: true,
           silenced: false,
@@ -30,14 +34,11 @@ export async function GET() {
           saveRequirementSatisfiedAt: now,
           createdAt: now,
           updatedAt: now,
-          accounts: [],
-          quota: {
-            maxSubscriptions: 9999,
-            maxNodesPerSubscription: 10000,
-            maxCustomTemplates: 9999,
-            maxImportSourcesPerType: 9999,
-            canUseSubscriptionLink: true,
-          },
+          accounts:
+            admin.githubId
+              ? [{ provider: "github", providerAccountId: admin.githubId, username: admin.githubLogin }]
+              : [],
+          quota: toUserQuotaProjection(admin.level),
           subscriptionCount,
           templateCount,
         }

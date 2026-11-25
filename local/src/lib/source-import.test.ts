@@ -53,7 +53,7 @@ function dnsResponse(addresses: string[]): Response {
   return new Response(out, { status: 200 });
 }
 
-async function runTransport(url: string, overrides: Record<string, unknown> = {}) {
+async function runTransport(url: string, overrides: Record<string, unknown> = {}, ownerId = "github-owner") {
   mocks.importSubscriptionFromUrl.mockImplementationOnce(async (request, options) => {
     return options.fetchText({
       url,
@@ -64,7 +64,7 @@ async function runTransport(url: string, overrides: Record<string, unknown> = {}
       ...overrides,
     });
   });
-  return importSourceUrlDirect({ url });
+  return importSourceUrlDirect({ url }, ownerId);
 }
 
 describe("local source import transport", () => {
@@ -469,21 +469,25 @@ describe("local source import transport", () => {
   });
 
   it("applies the enabled high-risk setting to redirect targets", async () => {
-    mocks.getAllowUnsafeSubscriptionSources.mockResolvedValue(true);
+    mocks.getAllowUnsafeSubscriptionSources.mockImplementation(async (ownerId: string) => ownerId === "admin-owner");
     vi.mocked(globalThis.fetch)
       .mockResolvedValueOnce(response("", { status: 302, headers: { location: "http://127.0.0.1/sub" } }))
       .mockResolvedValueOnce(response("ss://node", { status: 200 }));
 
-    await expect(runTransport("https://example.com/private-redirect")).resolves.toMatchObject({
+    await expect(runTransport("https://example.com/private-redirect", {}, "admin-owner")).resolves.toMatchObject({
       ok: true,
       content: "ss://node",
     });
-    expect(mocks.getAllowUnsafeSubscriptionSources).toHaveBeenCalledTimes(1);
+    mocks.lookup.mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
+    mocks.requestPinnedText.mockResolvedValueOnce({ status: 302, headers: { location: "http://127.0.0.1/sub" }, content: "" });
+    await expect(runTransport("https://example.com/private-redirect")).resolves.toMatchObject({ ok: false });
+    expect(mocks.requestPinnedText).toHaveBeenCalledTimes(1);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
   });
 
   it("returns userinfo headers with HEAD and skips when no userinfo URL is configured", async () => {
     mocks.getAllowUnsafeSubscriptionSources.mockResolvedValue(true);
-    await expect(fetchSourceUserInfoHeadersDirect({})).resolves.toBeUndefined();
+    await expect(fetchSourceUserInfoHeadersDirect({}, "admin-owner")).resolves.toBeUndefined();
 
     vi.mocked(globalThis.fetch).mockResolvedValueOnce(
       response("", {
@@ -496,7 +500,7 @@ describe("local source import transport", () => {
       fetchSourceUserInfoHeadersDirect({
         userinfoUrl: "https://example.com/userinfo",
         userinfoUserAgent: " Custom UA ",
-      })
+      }, "admin-owner")
     ).resolves.toMatchObject({
       "subscription-userinfo": "upload=1; total=2048",
     });
@@ -509,7 +513,7 @@ describe("local source import transport", () => {
     );
 
     vi.mocked(globalThis.fetch).mockResolvedValueOnce(response("", { status: 404 }));
-    await expect(fetchSourceUserInfoHeadersDirect({ userinfoUrl: "https://example.com/missing" })).resolves.toBeUndefined();
+    await expect(fetchSourceUserInfoHeadersDirect({ userinfoUrl: "https://example.com/missing" }, "admin-owner")).resolves.toBeUndefined();
     expect(globalThis.fetch).toHaveBeenLastCalledWith(
       "https://example.com/missing",
       expect.objectContaining({
@@ -518,11 +522,14 @@ describe("local source import transport", () => {
       })
     );
 
-    mocks.getAllowUnsafeSubscriptionSources.mockResolvedValue(true);
+    mocks.getAllowUnsafeSubscriptionSources.mockImplementation(async (ownerId: string) => ownerId === "admin-owner");
+    const privateUserinfo = { userinfoUrl: "http://127.0.0.1/userinfo" };
+    await expect(fetchSourceUserInfoHeadersDirect(privateUserinfo, "github-owner")).resolves.toBeUndefined();
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
     vi.mocked(globalThis.fetch).mockResolvedValueOnce(
       response("", { status: 200, headers: { "Subscription-Userinfo": "upload=2; total=4096" } })
     );
-    await expect(fetchSourceUserInfoHeadersDirect({ userinfoUrl: "http://127.0.0.1/userinfo" })).resolves.toMatchObject({
+    await expect(fetchSourceUserInfoHeadersDirect(privateUserinfo, "admin-owner")).resolves.toMatchObject({
       "subscription-userinfo": "upload=2; total=4096",
     });
   });

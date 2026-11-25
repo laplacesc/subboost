@@ -10,6 +10,8 @@ import type { SubBoostTemplateConfig } from "@subboost/core/types/template-confi
 import type { TemplateTab } from "@subboost/server-core/templates";
 import { decryptJsonObject, encryptJson } from "./crypto";
 import { prisma } from "./prisma";
+import { assertWithinQuota } from "./account-quota";
+import { requireLockedAccountLevel } from "./account-quota-store";
 
 type LocalTemplateTab = Extract<TemplateTab, "default" | "my">;
 
@@ -141,13 +143,18 @@ export async function createTemplate(ownerId: string, body: unknown): Promise<Lo
   const validated = validateSubBoostTemplateConfig(payload.config);
   if (!validated.ok) throw new Error(validated.error);
 
-  const row = await prisma.localTemplate.create({
-    data: {
-      ownerId,
-      name,
-      description: asString(payload.description).slice(0, 500),
-      encryptedConfig: encryptJson(validated.config),
-    },
+  const row = await prisma.$transaction(async (tx) => {
+    const level = await requireLockedAccountLevel(tx, ownerId);
+    const count = await tx.localTemplate.count({ where: { ownerId } });
+    assertWithinQuota("templates", level, count + 1, count);
+    return tx.localTemplate.create({
+      data: {
+        ownerId,
+        name,
+        description: asString(payload.description).slice(0, 500),
+        encryptedConfig: encryptJson(validated.config),
+      },
+    });
   });
   return formatLocalTemplate(row);
 }

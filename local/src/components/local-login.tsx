@@ -10,10 +10,12 @@ import { FormField } from "@subboost/ui/components/ui/form-field";
 import { Input } from "@subboost/ui/components/ui/input";
 import { PasswordField } from "@subboost/ui/components/ui/password-field";
 import { hasAuthConfigHandoff } from "@subboost/ui/store/config-store/auth-handoff";
+import { GithubLoginEntry } from "./github-login-entry";
 
 type AuthState = {
   setupRequired: boolean;
   authenticated: boolean;
+  githubLoginEnabled?: boolean;
 };
 
 async function readJson<T>(response: Response): Promise<T> {
@@ -107,6 +109,8 @@ export function LocalLogin() {
 
         <div className="bg-ink/5 backdrop-blur-sm border border-ink/10 rounded-2xl p-6 space-y-4">
           {auth ? (
+            <>
+            {!setupRequired && auth.githubLoginEnabled === true ? <GithubLoginEntry returnTo={getPostLoginHref()} /> : null}
             <form onSubmit={handleSubmit} className="space-y-3">
               <FormField label="管理员账号">
                 <Input
@@ -157,6 +161,7 @@ export function LocalLogin() {
                 {setupRequired ? "创建管理员" : "登录"}
               </Button>
             </form>
+            </>
           ) : (
             <div className="h-36 animate-pulse rounded-xl bg-ink/5" />
           )}

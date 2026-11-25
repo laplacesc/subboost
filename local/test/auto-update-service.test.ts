@@ -79,6 +79,7 @@ beforeEach(() => {
   vi.mocked(prisma.$transaction).mockClear();
   dbMocks.updateMany.mockResolvedValue({ count: 1 });
   dbMocks.transaction.mockImplementation(async (callback) => callback({
+    $queryRaw: async () => [{ accountLevel: 4 }],
     subscription: { updateMany: dbMocks.updateMany },
     subscriptionAutoUpdateState: { upsert: dbMocks.upsert },
   }));

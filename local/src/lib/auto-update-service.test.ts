@@ -89,6 +89,7 @@ describe("local subscription auto update service", () => {
     mocks.prisma.subscription.updateMany.mockResolvedValue({ count: 1 });
     mocks.prisma.subscriptionAutoUpdateState.upsert.mockResolvedValue({ upsert: true });
     mocks.prisma.$transaction.mockImplementation(async (callback) => callback({
+      $queryRaw: async () => [{ accountLevel: 4 }],
       subscription: { updateMany: mocks.prisma.subscription.updateMany },
       subscriptionAutoUpdateState: { upsert: mocks.prisma.subscriptionAutoUpdateState.upsert },
     }));
@@ -108,14 +109,15 @@ describe("local subscription auto update service", () => {
       cacheEntry: { nodes: [{ name: "A" }], subscriptionInfo: { upload: 1 } },
       nodeCount: 1,
     });
-    mocks.resolveAutomaticRefreshCompletionDecision.mockReturnValue({
+    mocks.resolveAutomaticRefreshCompletionDecision.mockImplementation(({ prepared }) => ({
       kind: "success",
+      refreshResult: prepared.refreshResult,
       nextAutoUpdateState: {
         state: { lastAttemptedAt: now, externalFailureCount: 0 },
         shouldDisableAutoUpdate: false,
       },
       outcome: { kind: "updated", subscriptionId: "sub-1" },
-    });
+    }));
     mocks.resolveAutomaticRefreshUnexpectedFailureCompletion.mockReturnValue({
       attemptedState: { lastAttemptedAt: now, externalFailureCount: 1 },
       message: "unexpected",

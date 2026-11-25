@@ -1,9 +1,9 @@
 "use client";
 
 import * as React from "react";
-import { LogOut, Network, ServerCog, ShieldCheck } from "lucide-react";
+import { Network, ServerCog } from "lucide-react";
 
-import { Button } from "@subboost/ui/components/ui/button";
+import { AccountProfileCard } from "@local/components/account-profile-card";
 import { Card, CardContent, CardHeader, CardTitle } from "@subboost/ui/components/ui/card";
 import { SwitchField } from "@subboost/ui/components/ui/switch-field";
 import { useUserStore } from "@subboost/ui/store/user-store";
@@ -21,7 +21,7 @@ export default function SettingsPage() {
 
   React.useEffect(() => {
     let cancelled = false;
-    if (!user) {
+    if (!user?.isAdmin) {
       setSourceImportLoading(false);
       return () => {
         cancelled = true;
@@ -89,52 +89,33 @@ export default function SettingsPage() {
       <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold mb-1">账户设置</h1>
-          <p className="text-fg-50">本地管理员、订阅源安全和运行端点</p>
+          <p className="text-fg-50">账户信息、订阅源安全和运行端点</p>
         </div>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader className="flex flex-row items-center gap-3 space-y-0">
-            <div className="rounded-lg bg-indigo-500/20 p-2 text-indigo-300">
-              <ShieldCheck className="h-5 w-5" />
-            </div>
-            <CardTitle className="text-base">本地管理员</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <p className="text-xs text-fg-40">用户名</p>
-              <p className="mt-1 font-medium">{user?.username || "未登录"}</p>
-            </div>
-            <div>
-              <p className="text-xs text-fg-40">已保存订阅</p>
-              <p className="mt-1 font-medium">{user ? `${user.subscriptionCount} / ${user.quota.maxSubscriptions}` : "-"}</p>
-            </div>
-            <Button variant="destructive" className="gap-2" onClick={() => void handleLogout()} disabled={!user}>
-              <LogOut className="h-4 w-4" />
-              退出登录
-            </Button>
-          </CardContent>
-        </Card>
+        <AccountProfileCard user={user} onLogout={() => void handleLogout()} />
 
-        <Card>
-          <CardHeader className="flex flex-row items-center gap-3 space-y-0">
-            <div className="rounded-lg bg-emerald-500/20 p-2 text-emerald-300">
-              <Network className="h-5 w-5" />
-            </div>
-            <CardTitle className="text-base">订阅源安全</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            <SwitchField
-              label="允许本机和局域网订阅"
-              description="开启后，本机、局域网及其他保留地址都可作为订阅源。仅在信任来源时开启。"
-              checked={allowUnsafeSubscriptionSources}
-              disabled={!user || sourceImportLoading || sourceImportSaving}
-              onCheckedChange={(checked) => void handleUnsafeSourceToggle(checked)}
-            />
-            {sourceImportError && <p className="text-xs text-red-300">{sourceImportError}</p>}
-          </CardContent>
-        </Card>
+        {user?.isAdmin && (
+          <Card>
+            <CardHeader className="flex flex-row items-center gap-3 space-y-0">
+              <div className="rounded-lg bg-emerald-500/20 p-2 text-emerald-300">
+                <Network className="h-5 w-5" />
+              </div>
+              <CardTitle className="text-base">订阅源安全</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <SwitchField
+                label="允许本机和局域网订阅"
+                description="开启后，仅你自己的订阅可使用本机、局域网及其他保留地址作为订阅源。仅在信任来源时开启。"
+                checked={allowUnsafeSubscriptionSources}
+                disabled={sourceImportLoading || sourceImportSaving}
+                onCheckedChange={(checked) => void handleUnsafeSourceToggle(checked)}
+              />
+              {sourceImportError && <p className="text-xs text-red-300">{sourceImportError}</p>}
+            </CardContent>
+          </Card>
+        )}
 
         <Card>
           <CardHeader className="flex flex-row items-center gap-3 space-y-0">

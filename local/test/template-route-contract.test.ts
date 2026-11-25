@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { QuotaExceededError } from "@local/lib/account-quota";
 import { getCurrentAdmin } from "@local/lib/auth";
 import {
   createTemplate,
@@ -129,6 +130,14 @@ describe("local template routes", () => {
     await expect(response.json()).resolves.toMatchObject({
       error: "Unable to create template.",
       code: "BAD_REQUEST",
+    });
+
+    vi.mocked(createTemplate).mockRejectedValueOnce(new QuotaExceededError("templates", 2, 1));
+    response = await collectionRoute.POST(jsonRequest("http://local.test/api/templates", { name: "Second" }));
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      error: "当前账户等级最多可创建 1 个自定义模板。",
+      code: "QUOTA_EXCEEDED",
     });
 
     response = await collectionRoute.DELETE(new Request("http://local.test/api/templates"));
